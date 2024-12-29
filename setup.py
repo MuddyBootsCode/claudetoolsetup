@@ -1,39 +1,130 @@
+#!/usr/bin/env python3
 import subprocess
 import os
 import sys
+import platform
 from pathlib import Path
 import shutil
+import json
+import logging
 
-def check_uv_exists():
-    """Check if uv is available in the system."""
-    return shutil.which('uv') is not None
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def find_uv_path():
+    """Find the UV executable path in the system."""
+    # First check if UV_PATH environment variable is set
+    if "UV_PATH" in os.environ and Path(os.environ["UV_PATH"]).exists():
+        return os.environ["UV_PATH"]
+    
+    # Check if uv is in PATH
+    uv_in_path = shutil.which('uv')
+    if uv_in_path:
+        return uv_in_path
+    
+    # Check common installation locations
+    possible_locations = [
+        Path.home() / ".local" / "bin" / "uv",
+        Path.home() / ".cargo" / "bin" / "uv",
+        Path("/usr/local/bin/uv"),
+        Path("/usr/bin/uv")
+    ]
+    
+    # On Windows, add Windows-specific paths
+    if os.name == 'nt':
+        possible_locations.extend([
+            Path(os.environ.get('LOCALAPPDATA', '')) / "Programs" / "uv" / "uv.exe",
+            Path(os.environ.get('APPDATA', '')) / "uv" / "uv.exe"
+        ])
+    
+    for path in possible_locations:
+        if path.exists():
+            return str(path)
+    
+    return None
 
 def install_uv():
     """Install uv using the official install script."""
-    print("Installing uv...")
+    logger.info("Installing uv...")
+    if platform.system() == "Windows":
+        logger.error("Please install uv manually from: https://github.com/astral-sh/uv")
+        sys.exit(1)
+    
     try:
-        process = subprocess.run(
-            "curl -LsSf https://astral.sh/uv/install.sh | sh",
+        # Create a temporary file for the installer
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.sh', delete=False) as temp_file:
+            # Download the installer
+            subprocess.run([
+                "curl", "-L", "-o", temp_file.name,
+                "https://astral.sh/uv/install.sh"
+            ], check=True)
+            
+            # Make the installer executable
+            os.chmod(temp_file.name, 0o755)
+            
+            # Run the installer
+            subprocess.run([temp_file.name], check=True)
+            
+            # Clean up
+            os.unlink(temp_file.name)
+        
+        # Update PATH to include ~/.local/bin
+        local_bin = str(Path.home() / ".local" / "bin")
+        os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+        
+        # Verify installation
+        uv_path = find_uv_path()
+        if uv_path:
+            logger.info("✓ uv installed successfully")
+            return uv_path
+        else:
+            logger.error("Could not locate uv after installation.")
+            logger.info(f"Please try adding {local_bin} to your PATH manually:")
+            logger.info("    export PATH=\"$HOME/.local/bin:$PATH\"")
+            sys.exit(1)
+            
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to install uv: {e}")
+        sys.exit(1)
+
+def run_command(cmd, cwd=None):
+    """Execute a command and handle errors."""
+    try:
+        result = subprocess.run(
+            cmd,
             shell=True,
             check=True,
             text=True,
+            cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        print("✓ uv installed successfully")
-        
-        # Refresh PATH to include uv
-        os.environ["PATH"] = f"{os.path.expanduser('~/.cargo/bin')}:{os.environ['PATH']}"
+        logger.info(f"✓ {cmd}")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Error installing uv:")
-        print(f"Exit code: {e.returncode}")
-        print(f"Error output: {e.stderr}")
+        logger.error(f"Error executing '{cmd}':")
+        logger.error(f"Exit code: {e.returncode}")
+        logger.error(f"Error output: {e.stderr}")
         return False
 
 def update_pyproject_toml():
-    """Update pyproject.toml with additional configuration."""
-    additional_config = """
+    """Update or create pyproject.toml with configuration."""
+    content = """[project]
+name = "weather"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "mcp>=1.1.2",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -44,42 +135,27 @@ packages = ["src/weather"]
 [project.scripts]
 weather = "weather:main"
 """
-    with open("pyproject.toml", "a") as f:
-        f.write(additional_config)
-    print("✓ Updated pyproject.toml with build system and scripts configuration")
-
-def run_command(command, cwd=None):
-    """Execute a command and wait for it to complete."""
-    try:
-        process = subprocess.run(
-            command,
-            shell=True,
-            check=True,
-            text=True,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        print(f"✓ {command}")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Error executing '{command}':")
-        print(f"Exit code: {e.returncode}")
-        print(f"Error output: {e.stderr}")
-        return False
+    with open("pyproject.toml", "w") as f:
+        f.write(content)
+    logger.info("✓ Updated pyproject.toml configuration")
 
 def setup_claude_config():
     """Set up the Claude desktop configuration with the weather server."""
-    import json
-    from pathlib import Path
-    
     # Get the absolute path to the weather project
     project_dir = Path.cwd()
     if project_dir.name != "weather":
         project_dir = project_dir / "weather"
     
-    # Construct the path to the Claude config
-    config_path = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    # Find UV path
+    uv_path = find_uv_path()
+    if not uv_path:
+        raise RuntimeError("Could not find uv executable. Please ensure it's installed and in PATH.")
+    
+    # Construct the path to the Claude config based on OS
+    if platform.system() == "Windows":
+        config_path = Path(os.environ["APPDATA"]) / "Claude" / "claude_desktop_config.json"
+    else:
+        config_path = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
     
     # Create default config if it doesn't exist
     if not config_path.exists():
@@ -87,7 +163,7 @@ def setup_claude_config():
         default_config = {
             "mcpServers": {
                 "weather": {
-                    "command": "/Users/muddybootscode/.local/bin/uv",
+                    "command": uv_path,
                     "args": [
                         "--directory",
                         str(project_dir),
@@ -100,7 +176,7 @@ def setup_claude_config():
             }
         }
         config_path.write_text(json.dumps(default_config, indent=4))
-        print(f"✓ Created new Claude config at {config_path}")
+        logger.info(f"✓ Created new Claude config at {config_path}")
         return
 
     # Update existing config
@@ -113,7 +189,7 @@ def setup_claude_config():
             
         # Add or update weather server configuration
         config["mcpServers"]["weather"] = {
-            "command": "/Users/muddybootscode/.local/bin/uv",
+            "command": uv_path,
             "args": [
                 "--directory",
                 str(project_dir),
@@ -126,18 +202,18 @@ def setup_claude_config():
         
         # Write updated config back to file
         config_path.write_text(json.dumps(config, indent=4))
-        print(f"✓ Updated Claude config at {config_path}")
+        logger.info(f"✓ Updated Claude config at {config_path}")
         
     except json.JSONDecodeError:
-        print(f"Warning: Existing config at {config_path} is not valid JSON. Creating backup and writing new config.")
+        logger.warning(f"Existing config at {config_path} is not valid JSON. Creating backup and writing new config.")
         backup_path = config_path.with_suffix('.json.bak')
         config_path.rename(backup_path)
         
-        # Write new config with same format
+        # Write new config
         default_config = {
             "mcpServers": {
                 "weather": {
-                    "command": "/Users/muddybootscode/.local/bin/uv",
+                    "command": uv_path,
                     "args": [
                         "--directory",
                         str(project_dir),
@@ -150,17 +226,17 @@ def setup_claude_config():
             }
         }
         config_path.write_text(json.dumps(default_config, indent=4))
-        print(f"✓ Created new Claude config at {config_path}")
+        logger.info(f"✓ Created new Claude config at {config_path}")
 
 def setup_project():
-    # Existing setup code...
-    if not check_uv_exists():
-        print("uv not found in system PATH")
-        if not install_uv():
-            print("Failed to install uv. Please install it manually and try again.")
-            return
+    """Set up the complete weather server project."""
+    # Check/install uv
+    uv_path = find_uv_path()
+    if not uv_path:
+        logger.info("uv not found in system PATH")
+        uv_path = install_uv()
     else:
-        print("✓ uv is already installed")
+        logger.info("✓ uv is already installed")
 
     # Get the current working directory
     current_dir = Path.cwd()
@@ -168,51 +244,45 @@ def setup_project():
     # Check if we're already in a weather directory
     if current_dir.name == "weather":
         project_dir = current_dir
-        print("✓ Already in weather directory")
-        # Initialize uv in the current directory if pyproject.toml doesn't exist
+        logger.info("✓ Already in weather directory")
         if not Path("pyproject.toml").exists():
-            if not run_command("uv init"):
+            if not run_command(f"{uv_path} init"):
                 return
             update_pyproject_toml()
     else:
         # Create project directory and initialize
-        if not run_command("uv init weather"):
+        if not run_command(f"{uv_path} init weather"):
             return
         project_dir = current_dir / "weather"
         os.chdir(project_dir)
-        print(f"✓ Changed directory to: {project_dir}")
+        logger.info(f"✓ Changed directory to: {project_dir}")
         update_pyproject_toml()
     
     # Create and activate virtual environment
     if not Path(".venv").exists():
-        if not run_command("uv venv"):
+        if not run_command(f"{uv_path} venv"):
             return
     else:
-        print("✓ Virtual environment already exists")
-    
-    # Note: source cannot be run directly as it's a shell built-in
-    # Instead, we'll activate the venv in the current Python process
-    venv_activate_script = project_dir / ".venv" / "bin" / "activate"
-    os.environ["VIRTUAL_ENV"] = str(project_dir / ".venv")
-    os.environ["PATH"] = str(project_dir / ".venv" / "bin") + os.pathsep + os.environ["PATH"]
-    print("✓ Activated virtual environment")
+        logger.info("✓ Virtual environment already exists")
     
     # Install dependencies
-    if not run_command("uv add mcp httpx"):
+    if not run_command(f"{uv_path} pip install mcp httpx"):
         return
     
     # Remove template file if it exists
     template_file = Path("hello.py")
     if template_file.exists():
         template_file.unlink()
-        print("✓ Removed hello.py")
+        logger.info("✓ Removed hello.py")
     
     # Create project structure
-    src_weather_dir = Path("src/weather")
-    src_weather_dir.mkdir(parents=True, exist_ok=True)
-    print(f"✓ Created directory: {src_weather_dir}")
+    src_dir = Path("src")
+    weather_dir = src_dir / "weather"
+    weather_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"✓ Created directory structure")
     
-    # Create and write content to files
+    # Create necessary Python files with content
+    # __init__.py content
     init_content = '''from . import server
 import asyncio
 
@@ -222,6 +292,11 @@ def main():
 
 __all__ = ['main', 'server']
 '''
+    init_file = weather_dir / "__init__.py"
+    init_file.write_text(init_content)
+    logger.info("✓ Created __init__.py with content")
+    
+    # server.py content
     server_content = '''from typing import Any
 import asyncio
 import httpx
@@ -462,14 +537,24 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 '''
-    init_file = src_weather_dir / "__init__.py"
-    server_file = src_weather_dir / "server.py"
-    init_file.write_text(init_content)
+    server_file = weather_dir / "server.py"
     server_file.write_text(server_content)
-    print("✓ Created Python files with initial content")
+    logger.info("✓ Created server.py with content")
     
-    print("\nProject setup completed successfully!")
+    # Set up Claude configuration
+    setup_claude_config()
+    
+    logger.info("\n✓ Project setup completed successfully!")
+    logger.info("\nNext steps:")
+    logger.info("1. Add your server implementation to src/weather/server.py")
+    logger.info("2. Restart Claude Desktop to apply the configuration changes")
 
 if __name__ == "__main__":
-    setup_project()
-    setup_claude_config()
+    try:
+        setup_project()
+    except KeyboardInterrupt:
+        logger.error("\nSetup interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"\nSetup failed: {e}")
+        sys.exit(1)
