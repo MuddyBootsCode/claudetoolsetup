@@ -16,7 +16,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def find_uv_path():
-    """Find the UV executable path in the system."""
+    """Find the UV executable path in the system.
+
+    This function searches for the UV executable in common installation locations
+    and environment variables.
+
+    Returns:
+        str | None: Path to the UV executable if found, None otherwise.
+    """
     # First check if UV_PATH environment variable is set
     if "UV_PATH" in os.environ and Path(os.environ["UV_PATH"]).exists():
         return os.environ["UV_PATH"]
@@ -48,7 +55,18 @@ def find_uv_path():
     return None
 
 def install_uv():
-    """Install uv using the official install script."""
+    """Install uv using the official install script.
+
+    This function downloads and executes the official UV installer script.
+    On Windows, it will exit with an error message since manual installation is required.
+
+    Returns:
+        str: Path to the installed UV executable.
+
+    Raises:
+        SystemExit: If installation fails or if running on Windows.
+        subprocess.CalledProcessError: If any installation command fails.
+    """
     logger.info("Installing uv...")
     if platform.system() == "Windows":
         logger.error("Please install uv manually from: https://github.com/astral-sh/uv")
@@ -93,7 +111,15 @@ def install_uv():
         sys.exit(1)
 
 def run_command(cmd, cwd=None):
-    """Execute a command and handle errors."""
+    """Execute a command and handle errors.
+
+    Args:
+        cmd (str): The command to execute.
+        cwd (str | Path | None): Working directory for command execution. Defaults to None.
+
+    Returns:
+        bool: True if command executed successfully, False otherwise.
+    """
     try:
         result = subprocess.run(
             cmd,
@@ -113,7 +139,14 @@ def run_command(cmd, cwd=None):
         return False
 
 def update_pyproject_toml():
-    """Update or create pyproject.toml with configuration."""
+    """Update or create pyproject.toml with configuration.
+
+    Creates or overwrites the pyproject.toml file with predefined configuration
+    including project metadata, dependencies, and build settings.
+
+    Returns:
+        None
+    """
     content = """[project]
 name = "weather"
 version = "0.1.0"
@@ -140,7 +173,18 @@ weather = "weather:main"
     logger.info("✓ Updated pyproject.toml configuration")
 
 def setup_claude_config():
-    """Set up the Claude desktop configuration with the weather server."""
+    """Set up the Claude desktop configuration with the weather server.
+
+    Configures the Claude desktop application to use the weather server by creating
+    or updating the configuration file with appropriate server settings.
+
+    Returns:
+        None
+
+    Raises:
+        RuntimeError: If UV executable cannot be found.
+        json.JSONDecodeError: If existing config file is invalid JSON.
+    """
     # Get the absolute path to the weather project
     project_dir = Path.cwd()
     if project_dir.name != "weather":
@@ -229,7 +273,23 @@ def setup_claude_config():
         logger.info(f"✓ Created new Claude config at {config_path}")
 
 def setup_project():
-    """Set up the complete weather server project."""
+    """Set up the complete weather server project.
+
+    Performs full project setup including:
+    - Installing UV if not present
+    - Creating project directory structure
+    - Setting up virtual environment
+    - Installing dependencies
+    - Creating necessary Python files
+    - Configuring Claude desktop integration
+
+    Returns:
+        None
+
+    Raises:
+        SystemExit: If critical setup steps fail.
+        Exception: For other unexpected errors during setup.
+    """
     # Check/install uv
     uv_path = find_uv_path()
     if not uv_path:
