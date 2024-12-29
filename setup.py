@@ -87,12 +87,14 @@ def setup_claude_config():
         default_config = {
             "mcpServers": {
                 "weather": {
-                    "command": "uv",
+                    "command": "/Users/muddybootscode/.local/bin/uv",
                     "args": [
                         "--directory",
                         str(project_dir),
                         "run",
-                        "weather"
+                        "python3",
+                        "-m",
+                        "weather.server"
                     ]
                 }
             }
@@ -111,12 +113,14 @@ def setup_claude_config():
             
         # Add or update weather server configuration
         config["mcpServers"]["weather"] = {
-            "command": "uv",
+            "command": "/Users/muddybootscode/.local/bin/uv",
             "args": [
                 "--directory",
                 str(project_dir),
                 "run",
-                "weather"
+                "python3",
+                "-m",
+                "weather.server"
             ]
         }
         
@@ -126,20 +130,21 @@ def setup_claude_config():
         
     except json.JSONDecodeError:
         print(f"Warning: Existing config at {config_path} is not valid JSON. Creating backup and writing new config.")
-        # Create backup of invalid config
         backup_path = config_path.with_suffix('.json.bak')
         config_path.rename(backup_path)
         
-        # Write new config
+        # Write new config with same format
         default_config = {
             "mcpServers": {
                 "weather": {
-                    "command": "uv",
+                    "command": "/Users/muddybootscode/.local/bin/uv",
                     "args": [
                         "--directory",
                         str(project_dir),
                         "run",
-                        "weather"
+                        "python3",
+                        "-m",
+                        "weather.server"
                     ]
                 }
             }

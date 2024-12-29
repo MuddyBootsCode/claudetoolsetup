@@ -234,3 +234,6 @@ async def main():
         raise
     finally:
         logger.info("Server shutting down...")
+
+if __name__ == "__main__":
+    asyncio.run(main())
